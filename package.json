@@ -9,7 +9,6 @@
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit"
   },
   "dependencies": {
-    "@next/swc-win32-x64-msvc": "15.5.6",
     "next": "15.5.6",
     "react": "19.1.0",
     "react-dom": "19.1.0"
