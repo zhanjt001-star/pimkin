@@ -1,0 +1,26 @@
+{
+  "name": "node-image-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node --require ./scripts/readlink-eisdir-patch.cjs ./node_modules/next/dist/bin/next dev",
+    "build": "node --require ./scripts/readlink-eisdir-patch.cjs ./node_modules/next/dist/bin/next build",
+    "start": "node --require ./scripts/readlink-eisdir-patch.cjs ./node_modules/next/dist/bin/next start",
+    "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit"
+  },
+  "dependencies": {
+    "@next/swc-win32-x64-msvc": "15.5.6",
+    "next": "15.5.6",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.3"
+  }
+}

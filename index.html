@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>节点生图工作台</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="modeChooser" class="mode-chooser" aria-label="选择使用界面">
+        <div class="chooser-window">
+          <p class="chooser-kicker">请选择进入界面</p>
+          <h1>节点生图工作台</h1>
+          <p class="chooser-copy">电脑界面用于搭建节点工作流，手机界面用于上传参考图、输入提示词并调用生图模型。</p>
+          <div class="chooser-actions">
+            <button class="chooser-card" type="button" data-start-mode="desktop">
+              <span class="chooser-icon">🖥</span>
+              <strong>电脑界面</strong>
+              <small>无限节点画布、右键添加卡片、连线编排生图流程</small>
+            </button>
+            <button class="chooser-card" type="button" data-start-mode="mobile">
+              <span class="chooser-icon">📱</span>
+              <strong>手机界面</strong>
+              <small>参考图上传、提示词、生图模型接入</small>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="desktopMode" class="workspace" aria-label="电脑节点画布">
+        <canvas id="connectionCanvas"></canvas>
+        <div id="workflowViewport" class="workflow-viewport" aria-label="节点画布"></div>
+
+        <button class="choose-again-button" type="button" data-show-chooser>选择界面</button>
+
+        <div class="theme-toggle" aria-label="明暗主题">
+          <span>浅色</span>
+          <button id="themeSwitch" type="button" aria-pressed="false" title="切换深色模式">
+            <span></span>
+          </button>
+          <span>深色</span>
+        </div>
+
+        <nav class="left-dock" aria-label="工作流操作">
+          <button id="guideButton" class="dock-button" type="button"><span>📖</span>操作指南</button>
+          <button id="exportButton" class="dock-button" type="button"><span>📤</span>导出工作流</button>
+          <button id="importButton" class="dock-button" type="button"><span>📥</span>导入工作流</button>
+          <button id="saveButton" class="dock-button" type="button"><span>💾</span>保存工作流</button>
+          <button id="templateButton" class="dock-button" type="button"><span>📁</span>工作流模板</button>
+        </nav>
+
+        <div class="left-dock lower" aria-label="系统操作">
+          <button id="settingsButton" class="dock-button muted" type="button"><span>⚙</span>系统设置</button>
+          <button id="historyButton" class="dock-button warning" type="button"><span>📜</span>生成历史</button>
+        </div>
+
+        <nav class="right-dock" aria-label="帮助入口">
+          <button id="tutorialButton" class="pill-button" type="button"><span>📖</span>查看使用教程</button>
+          <button id="lineStyleButton" class="pill-button" type="button"><span>🎨</span>连线样式</button>
+        </nav>
+
+        <button id="agentButton" class="agent-button" type="button">
+          <span class="agent-avatar">6789</span>
+          智能体
+        </button>
+
+        <section id="guidePanel" class="info-panel wide-panel hidden" aria-label="操作指南">
+          <div class="panel-header">
+            <h2>📋 操作指南</h2>
+            <button class="panel-close" type="button" data-close-panel>×</button>
+          </div>
+          <div class="guide-grid">
+            <article>
+              <h3>画布操作</h3>
+              <p>右键空白：添加各类卡片</p>
+              <p>右键节点：复制 / 删除 / 固定</p>
+              <p>Delete：删除选中卡片，连线自动解除</p>
+              <p>Ctrl / ⌘ + 鼠标框选：多选节点</p>
+              <p>中键拖拽或空格拖拽：平移画布</p>
+            </article>
+            <article>
+              <h3>复制粘贴</h3>
+              <p>Ctrl+C / V：复制粘贴卡片（含连线）</p>
+              <p>Ctrl+Z：撤销最近一次新增、删除或移动</p>
+              <p>保存工作流：写入浏览器缓存，下次打开自动恢复</p>
+              <p>导入 / 导出工作流：使用 JSON 文件转移节点图</p>
+            </article>
+            <article>
+              <h3>API 图像生成</h3>
+              <p>橙孔为提示词入口，绿孔为参考图或图片输出</p>
+              <p>图像生成节点支持香蕉模型和 GPT 模型</p>
+              <p>运行工作流会按连线顺序检查节点，并记录到生成历史</p>
+            </article>
+            <article>
+              <h3>智能对话</h3>
+              <p>黄孔接受文本卡片或对话输出作为提示词补充</p>
+              <p>五个绿孔可作为图 1～图 5 参考图入口</p>
+              <p>可同时接多张图片一起对话</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="templatePanel" class="info-panel template-panel hidden" aria-label="工作流模板">
+          <div class="panel-header">
+            <h2>📁 工作流模板</h2>
+            <button class="panel-close" type="button" data-close-panel>×</button>
+          </div>
+          <div class="template-list">
+            <button type="button" data-template="all">节点全量模板</button>
+            <button type="button" data-template="image-basic">文本生图 + 预览</button>
+            <button type="button" data-template="reference">参考图生图</button>
+            <button type="button" data-template="chat">智能对话增强提示词</button>
+          </div>
+        </section>
+
+        <section id="historyPanel" class="info-panel history-panel hidden" aria-label="生成历史">
+          <div class="panel-header">
+            <h2>📜 生成历史</h2>
+            <button class="panel-close" type="button" data-close-panel>×</button>
+          </div>
+          <div id="historyList" class="history-list">
+            <p>运行工作流后会在这里记录。</p>
+          </div>
+        </section>
+
+        <section id="lineStylePanel" class="info-panel line-style-panel hidden" aria-label="连线样式">
+          <div class="panel-header">
+            <h2>🎨 连线样式</h2>
+            <button class="panel-close" type="button" data-close-panel>×</button>
+          </div>
+          <div class="line-style-form">
+            <label for="lineColorMode">线条颜色</label>
+            <select id="lineColorMode">
+              <option value="by-port">按端口类型</option>
+              <option value="green">图片绿</option>
+              <option value="orange">深橘色</option>
+              <option value="purple">预览紫</option>
+              <option value="blue">白色</option>
+              <option value="custom">自定义颜色</option>
+            </select>
+
+            <label for="lineCustomColor">自定义颜色</label>
+            <input id="lineCustomColor" type="color" value="#c45a00" />
+
+            <label for="lineType">线型</label>
+            <select id="lineType">
+              <option value="curve">平滑曲线</option>
+              <option value="straight">直线</option>
+              <option value="elbow">折线</option>
+            </select>
+
+            <label for="linePattern">虚实</label>
+            <select id="linePattern">
+              <option value="solid">实线</option>
+              <option value="dashed">虚线</option>
+              <option value="dotted">点线</option>
+            </select>
+
+            <label for="lineWidth">粗细 <span id="lineWidthValue">4px</span></label>
+            <input id="lineWidth" type="range" min="2" max="9" value="4" />
+          </div>
+        </section>
+
+        <div id="contextMenu" class="context-menu hidden" role="menu">
+          <div class="context-section">
+            <p>🧠 AI 模型 <span>◂</span></p>
+            <button type="button" data-node-type="image-generation">🎨 图像生成</button>
+            <button type="button" data-node-type="chat">💬 智能对话</button>
+          </div>
+          <div class="context-section">
+            <p>🔗 自定义 API <span>◂</span></p>
+            <button type="button" data-node-type="custom-image">🎨 图像生成（自定义）</button>
+            <button type="button" data-node-type="custom-chat">💬 智能对话（自定义）</button>
+          </div>
+          <div class="context-section">
+            <p>📝 文本 <span>◂</span></p>
+            <button type="button" data-node-type="text-card">📝 文本卡片</button>
+            <button type="button" data-node-type="multiline-text">📋 多行文本</button>
+          </div>
+          <div class="context-section">
+            <p>🖼 图片 <span>◂</span></p>
+            <button type="button" data-node-type="reference-image">🖼 加载参考图</button>
+          </div>
+          <div class="context-section">
+            <p>🔧 工具 <span>◂</span></p>
+            <button type="button" data-node-type="logic-switch">🔀 逻辑开关</button>
+            <button type="button" data-node-type="resize-image">📐 缩放图片</button>
+          </div>
+          <div class="context-section">
+            <p>🔍 其他 <span>◂</span></p>
+            <button type="button" data-node-type="preview">👁 预览任意</button>
+          </div>
+        </div>
+
+        <div id="nodeMenu" class="context-menu node-menu hidden" role="menu">
+          <button type="button" data-node-action="pin">📌 固定 / 取消固定</button>
+          <button type="button" data-node-action="disable">⏸ 禁用 / 启用</button>
+          <button type="button" data-node-action="duplicate">📄 复制节点</button>
+          <button type="button" data-node-action="delete">🗑 删除节点</button>
+        </div>
+
+        <div class="bottom-actions">
+          <button id="stopButton" class="stop-button" type="button"><span>■</span>停止运行</button>
+          <button id="runButton" class="run-button" type="button"><span>🚀</span>运行工作流</button>
+        </div>
+
+        <div class="canvas-hud">
+          <span id="zoomText">100%</span>
+          <span>右键添加节点，拖拽连线，滚轮缩放</span>
+        </div>
+
+        <input id="workflowFile" type="file" accept="application/json" hidden />
+      </section>
+
+      <section id="mobileMode" class="mobile-generator" aria-label="手机生图模式">
+        <header class="mobile-topbar">
+          <button class="mode-button" data-show-chooser type="button">选择界面</button>
+          <h1>手机生图</h1>
+        </header>
+
+        <div class="phone-preview">
+          <div class="phone-frame">
+            <div class="mobile-card">
+              <label class="upload-zone" for="referenceInput">
+                <input id="referenceInput" type="file" accept="image/*" />
+                <img id="referencePreview" alt="" />
+                <span id="uploadText">上传参考图</span>
+              </label>
+
+              <label for="promptInput">提示词</label>
+              <textarea id="promptInput" rows="5" placeholder="描述你想生成的图片，例如：赛博朋克风格的城市夜景，霓虹灯，电影感光影"></textarea>
+
+              <label for="modelSelect">生图模型</label>
+              <select id="modelSelect">
+                <option value="banana">香蕉模型</option>
+                <option value="gpt-image">GPT 模型</option>
+              </select>
+
+              <details class="api-settings">
+                <summary>API 接入设置</summary>
+                <label for="apiEndpoint">接口地址</label>
+                <input id="apiEndpoint" type="url" placeholder="https://api.example.com/generate" />
+                <label for="apiKey">API Key</label>
+                <input id="apiKey" type="password" placeholder="本地保存，不会上传到本站服务器" />
+              </details>
+
+              <button id="generateButton" class="primary-action" type="button">生成图片</button>
+              <p id="generateStatus" class="status-text">仅允许选择香蕉模型或 GPT 模型。</p>
+            </div>
+          </div>
+        </div>
+
+        <section class="result-panel">
+          <h2>生成结果</h2>
+          <div id="resultBox" class="result-box">
+            <span>生成后的图片会显示在这里</span>
+          </div>
+          <div class="result-actions">
+            <button id="downloadResultButton" type="button" disabled>下载结果</button>
+            <button id="copyPayloadButton" type="button">复制请求参数</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
