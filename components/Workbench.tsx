@@ -205,7 +205,7 @@ const defaultAppSettings: AppSettings = {
   imageApi: {
     endpoint: "",
     apiKey: "",
-    model: IMAGE_MODEL_OPTIONS[0].value,
+    model: IMAGE_MODEL_OPTIONS[1].value,
   },
   mobileApi: {
     endpoint: "",
@@ -399,6 +399,25 @@ function apiAuthHeader(apiKey: string): Record<string, string> {
   const key = apiKey.trim().replace(/^["']|["']$/g, "");
   if (!key) return {};
   return { Authorization: /^Bearer\s+/i.test(key) ? key : `Bearer ${key}` };
+}
+
+function imageReferencePayload(referenceImages: string[], model: string) {
+  const firstReferenceImage = referenceImages[0];
+  if (!firstReferenceImage) return {};
+  if (model === "gpt-image-2") {
+    return {
+      image: referenceImages,
+      images: referenceImages,
+      referenceImage: firstReferenceImage,
+      referenceImages,
+    };
+  }
+  return {
+    image: firstReferenceImage,
+    images: referenceImages,
+    referenceImage: firstReferenceImage,
+    referenceImages,
+  };
 }
 
 async function downloadImageFile(src: string, filename = `generated-${Date.now()}.png`) {
@@ -1165,15 +1184,14 @@ export default function Workbench() {
         const promptText = promptParts.join("\n\n");
         if (!promptText) throw new Error(`节点「${nodeConfigs[imageNode.type].title}」缺少提示词。`);
 
+        const model = imageApi.model || imageNode.values.model || defaultAppSettings.imageApi.model;
         const referenceImages = incomingValues(imageNode.id, ["ref1", "ref2", "ref3", "ref4", "ref5"]).filter((value) => value.startsWith("data:image/") || value.startsWith("http"));
-        const firstReferenceImage = referenceImages[0];
         const payload = {
-          model: imageNode.values.model || imageApi.model,
+          model,
           prompt: promptText,
           size: imageSizeForRatio(imageNode.values.ratio),
           n: Number(imageNode.values.count || "1"),
-          ...(firstReferenceImage ? { image: firstReferenceImage, referenceImage: firstReferenceImage } : {}),
-          ...(referenceImages.length ? { images: referenceImages, referenceImages } : {}),
+          ...imageReferencePayload(referenceImages, model),
         };
         const response = await fetch(normalizeImageEndpoint(imageApi.endpoint), {
           method: "POST",
@@ -1216,13 +1234,12 @@ export default function Workbench() {
 
   const buildMobilePayload = useCallback(() => {
     const referenceImages = referenceDataUrl ? [referenceDataUrl] : [];
-    const firstReferenceImage = referenceImages[0];
+    const model = appSettings.mobileApi.model;
     return {
-      model: appSettings.mobileApi.model,
+      model,
       prompt: prompt.trim(),
       size: "1024x1024",
-      ...(firstReferenceImage ? { image: firstReferenceImage, referenceImage: firstReferenceImage } : {}),
-      ...(referenceImages.length ? { images: referenceImages, referenceImages } : {}),
+      ...imageReferencePayload(referenceImages, model),
     };
   }, [appSettings.mobileApi.model, prompt, referenceDataUrl]);
 
