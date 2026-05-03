@@ -987,6 +987,14 @@ export default function Workbench() {
     setSelectedNodeIds(new Set(pasted.map((node) => node.id)));
   }, [saveSnapshot]);
 
+  const openImageViewer = useCallback((src: string, title = "生成结果") => {
+    dragRef.current = null;
+    panRef.current = null;
+    setPendingConnection(null);
+    setPointerPosition(null);
+    setImageViewer({ src, title });
+  }, []);
+
   const undo = useCallback(() => {
     const snapshot = undoStackRef.current.pop();
     if (!snapshot) return;
@@ -1010,6 +1018,10 @@ export default function Workbench() {
       }
       if (event.key === "Delete" && selectedNodeIds.size) deleteNodes([...selectedNodeIds], true);
       if (event.key === "Escape") {
+        dragRef.current = null;
+        panRef.current = null;
+        setImageViewer(null);
+        setPointerPosition(null);
         setPendingConnection(null);
         closeMenus();
       }
@@ -1071,11 +1083,21 @@ export default function Workbench() {
       dragRef.current = null;
       panRef.current = null;
     };
+    const clearPointerState = () => {
+      dragRef.current = null;
+      panRef.current = null;
+      setPendingConnection(null);
+      setPointerPosition(null);
+    };
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", clearPointerState);
+    window.addEventListener("blur", clearPointerState);
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", clearPointerState);
+      window.removeEventListener("blur", clearPointerState);
     };
   }, [camera.scale, connectPorts, pendingConnection, saveWorkflowQuietly]);
 
@@ -1143,13 +1165,15 @@ export default function Workbench() {
         const promptText = promptParts.join("\n\n");
         if (!promptText) throw new Error(`节点「${nodeConfigs[imageNode.type].title}」缺少提示词。`);
 
-        const referenceImage = incomingValues(imageNode.id, ["ref1", "ref2", "ref3", "ref4", "ref5"]).find((value) => value.startsWith("data:image/"));
+        const referenceImages = incomingValues(imageNode.id, ["ref1", "ref2", "ref3", "ref4", "ref5"]).filter((value) => value.startsWith("data:image/") || value.startsWith("http"));
+        const firstReferenceImage = referenceImages[0];
         const payload = {
           model: imageNode.values.model || imageApi.model,
           prompt: promptText,
           size: imageSizeForRatio(imageNode.values.ratio),
           n: Number(imageNode.values.count || "1"),
-          ...(referenceImage ? { referenceImage } : {}),
+          ...(firstReferenceImage ? { image: firstReferenceImage, referenceImage: firstReferenceImage } : {}),
+          ...(referenceImages.length ? { images: referenceImages, referenceImages } : {}),
         };
         const response = await fetch(normalizeImageEndpoint(imageApi.endpoint), {
           method: "POST",
@@ -1362,7 +1386,7 @@ export default function Workbench() {
                 onPortClick={handlePortClick}
                 onPortPointerDown={handlePortPointerDown}
                 onFieldChange={setNodeValue}
-                onPreviewImage={(src) => setImageViewer({ src, title: "生成结果" })}
+                onPreviewImage={(src) => openImageViewer(src)}
                 onDownloadImage={(src) => void downloadImageFile(src)}
                 onCommand={(command) => {
                   saveSnapshot();
