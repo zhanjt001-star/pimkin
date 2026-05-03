@@ -401,6 +401,30 @@ function apiAuthHeader(apiKey: string): Record<string, string> {
   return { Authorization: /^Bearer\s+/i.test(key) ? key : `Bearer ${key}` };
 }
 
+async function downloadImageFile(src: string, filename = `generated-${Date.now()}.png`) {
+  const save = (href: string) => {
+    const link = document.createElement("a");
+    link.download = filename;
+    link.href = href;
+    link.click();
+  };
+
+  if (!src.startsWith("http")) {
+    save(src);
+    return;
+  }
+
+  try {
+    const response = await fetch(src);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    save(url);
+    URL.revokeObjectURL(url);
+  } catch {
+    save(src);
+  }
+}
+
 async function readJsonResponse(response: Response) {
   const body = await response.text();
   const contentType = response.headers.get("content-type") || "";
@@ -519,6 +543,7 @@ export default function Workbench() {
   const [appSettings, setAppSettings] = useState<AppSettings>(defaultAppSettings);
   const [referenceDataUrl, setReferenceDataUrl] = useState("");
   const [resultDataUrl, setResultDataUrl] = useState("");
+  const [imageViewer, setImageViewer] = useState<{ src: string; title: string } | null>(null);
   const [prompt, setPrompt] = useState("");
   const [generateStatus, setGenerateStatus] = useState("手机模式使用独立的手机生图 API，可选 Nano Banana 2 或 GPT Image 2。");
   const [workflowStatus, setWorkflowStatus] = useState("右键添加节点，拖拽连线，滚轮缩放");
@@ -1337,6 +1362,8 @@ export default function Workbench() {
                 onPortClick={handlePortClick}
                 onPortPointerDown={handlePortPointerDown}
                 onFieldChange={setNodeValue}
+                onPreviewImage={(src) => setImageViewer({ src, title: "生成结果" })}
+                onDownloadImage={(src) => void downloadImageFile(src)}
                 onCommand={(command) => {
                   saveSnapshot();
                   if (command === "clear-text") setNodeValue(node.id, "text", "");
@@ -1387,6 +1414,15 @@ export default function Workbench() {
               onChange={setAppSettings}
               onChooseDirectory={chooseImageDirectory}
               onClose={() => setActivePanel(null)}
+            />
+          )}
+
+          {imageViewer && (
+            <ImageViewer
+              src={imageViewer.src}
+              title={imageViewer.title}
+              onClose={() => setImageViewer(null)}
+              onDownload={() => void downloadImageFile(imageViewer.src)}
             />
           )}
 
@@ -1473,6 +1509,8 @@ function NodeCard({
   onPortClick,
   onPortPointerDown,
   onFieldChange,
+  onPreviewImage,
+  onDownloadImage,
   onCommand,
   onFileChange,
   registerPort,
@@ -1486,6 +1524,8 @@ function NodeCard({
   onPortClick: (nodeId: string, portId: string, direction: PortDirection, color: PortColor) => void;
   onPortPointerDown: (nodeId: string, portId: string, direction: PortDirection, color: PortColor, event: React.PointerEvent<HTMLButtonElement>) => void;
   onFieldChange: (nodeId: string, field: string, value: string) => void;
+  onPreviewImage: (src: string) => void;
+  onDownloadImage: (src: string) => void;
   onCommand: (command: string) => void;
   onFileChange: (file: File) => void;
   registerPort: (key: string, element: HTMLButtonElement | null) => void;
@@ -1539,7 +1579,7 @@ function NodeCard({
         </span>
         <span className="text-xs font-extrabold text-brand-muted">{config.badge}</span>
       </header>
-      <div className="grid gap-2.5 p-3">{renderNodeBody(node, onFieldChange, onCommand, onFileChange)}</div>
+      <div className="grid gap-2.5 p-3">{renderNodeBody(node, onFieldChange, onPreviewImage, onDownloadImage, onCommand, onFileChange)}</div>
     </article>
   );
 }
@@ -1592,6 +1632,8 @@ function PortButton({
 function renderNodeBody(
   node: WorkflowNode,
   onFieldChange: (nodeId: string, field: string, value: string) => void,
+  onPreviewImage: (src: string) => void,
+  onDownloadImage: (src: string) => void,
   onCommand: (command: string) => void,
   onFileChange: (file: File) => void,
 ) {
@@ -1650,7 +1692,12 @@ function renderNodeBody(
         {field("system", node.values.system, true)}
         {field("user", node.values.user, true)}
         {node.values.imageData && (
-          <img className="max-h-[180px] w-full rounded-lg border border-brand/20 object-contain" src={node.values.imageData} alt="生成结果" />
+          <ImageResultPreview
+            src={node.values.imageData}
+            alt="生成结果"
+            onPreview={() => onPreviewImage(node.values.imageData)}
+            onDownload={() => onDownloadImage(node.values.imageData)}
+          />
         )}
       </>
     );
@@ -1748,12 +1795,80 @@ function renderNodeBody(
   if (node.type === "preview") {
     return (
       <div className="grid min-h-[148px] place-items-center overflow-hidden rounded-lg border border-dashed border-brand bg-brand-pale/70 text-center text-xs font-black text-brand-dark">
-        {node.values.imageData ? <img className="h-full max-h-[220px] w-full object-contain" src={node.values.imageData} alt="预览结果" /> : node.values.text || "连接并运行..."}
+        {node.values.imageData ? (
+          <ImageResultPreview
+            src={node.values.imageData}
+            alt="预览结果"
+            onPreview={() => onPreviewImage(node.values.imageData)}
+            onDownload={() => onDownloadImage(node.values.imageData)}
+          />
+        ) : node.values.text || "连接并运行..."}
       </div>
     );
   }
 
   return <div className="grid min-h-[148px] place-items-center rounded-lg border border-dashed border-brand bg-brand-pale/70 text-xs font-black text-brand-dark">连接并运行...</div>;
+}
+
+function ImageResultPreview({
+  src,
+  alt,
+  onPreview,
+  onDownload,
+}: {
+  src: string;
+  alt: string;
+  onPreview: () => void;
+  onDownload: () => void;
+}) {
+  return (
+    <div className="grid w-full gap-2">
+      <button className="group grid min-h-[150px] w-full place-items-center overflow-hidden rounded-lg border border-brand/20 bg-white/80" type="button" onClick={onPreview}>
+        <img className="max-h-[220px] w-full object-contain transition-transform group-hover:scale-[1.02]" src={src} alt={alt} />
+      </button>
+      <div className="grid grid-cols-2 gap-2">
+        <button className="min-h-9 rounded-lg border-2 border-brand bg-white px-2 text-xs font-black text-brand-dark" type="button" onClick={onPreview}>
+          放大浏览
+        </button>
+        <button className="min-h-9 rounded-lg bg-brand px-2 text-xs font-black text-white" type="button" onClick={onDownload}>
+          下载图片
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ImageViewer({
+  src,
+  title,
+  onClose,
+  onDownload,
+}: {
+  src: string;
+  title: string;
+  onClose: () => void;
+  onDownload: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[30] grid bg-black/82 p-4 text-white" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className="flex min-h-0 flex-col gap-3" onClick={(event) => event.stopPropagation()}>
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="m-0 text-lg font-black">{title}</h2>
+          <div className="flex gap-2">
+            <button className="min-h-10 rounded-lg bg-white px-4 font-black text-brand-dark" type="button" onClick={onDownload}>
+              下载图片
+            </button>
+            <button className="min-h-10 rounded-lg border border-white/70 px-4 font-black text-white" type="button" onClick={onClose}>
+              关闭
+            </button>
+          </div>
+        </header>
+        <div className="grid min-h-0 flex-1 place-items-center overflow-auto rounded-xl bg-black/45 p-3">
+          <img className="max-h-full max-w-full object-contain" src={src} alt={title} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CatBadge() {
