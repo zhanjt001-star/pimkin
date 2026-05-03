@@ -395,6 +395,12 @@ function normalizeImageEndpoint(endpoint: string) {
   return value;
 }
 
+function apiAuthHeader(apiKey: string): Record<string, string> {
+  const key = apiKey.trim().replace(/^["']|["']$/g, "");
+  if (!key) return {};
+  return { Authorization: /^Bearer\s+/i.test(key) ? key : `Bearer ${key}` };
+}
+
 async function readJsonResponse(response: Response) {
   const body = await response.text();
   const contentType = response.headers.get("content-type") || "";
@@ -1117,7 +1123,6 @@ export default function Workbench() {
           model: imageNode.values.model || imageApi.model,
           prompt: promptText,
           size: imageSizeForRatio(imageNode.values.ratio),
-          quality: imageNode.values.quality,
           n: Number(imageNode.values.count || "1"),
           ...(referenceImage ? { referenceImage } : {}),
         };
@@ -1125,7 +1130,7 @@ export default function Workbench() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(imageApi.apiKey.trim() ? { Authorization: `Bearer ${imageApi.apiKey.trim()}` } : {}),
+            ...apiAuthHeader(imageApi.apiKey),
           },
           body: JSON.stringify(payload),
         });
@@ -1192,7 +1197,7 @@ export default function Workbench() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(mobileApi.apiKey.trim() ? { Authorization: `Bearer ${mobileApi.apiKey.trim()}` } : {}),
+          ...apiAuthHeader(mobileApi.apiKey),
         },
         body: JSON.stringify(payload),
       });
