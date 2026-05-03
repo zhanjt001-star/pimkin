@@ -1215,11 +1215,14 @@ export default function Workbench() {
   const currentMobileModel = appSettings.mobileApi.model;
 
   const buildMobilePayload = useCallback(() => {
+    const referenceImages = referenceDataUrl ? [referenceDataUrl] : [];
+    const firstReferenceImage = referenceImages[0];
     return {
       model: appSettings.mobileApi.model,
       prompt: prompt.trim(),
-      referenceImage: referenceDataUrl || null,
       size: "1024x1024",
+      ...(firstReferenceImage ? { image: firstReferenceImage, referenceImage: firstReferenceImage } : {}),
+      ...(referenceImages.length ? { images: referenceImages, referenceImages } : {}),
     };
   }, [appSettings.mobileApi.model, prompt, referenceDataUrl]);
 
