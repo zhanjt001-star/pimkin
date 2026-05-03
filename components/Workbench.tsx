@@ -379,6 +379,58 @@ function modelDisplayName(models: ModelOption[], value: string) {
   return match ? `${match.provider} · ${match.label}` : value;
 }
 
+function normalizeImageEndpoint(endpoint: string) {
+  const value = endpoint.trim();
+  if (!value) return value;
+  try {
+    const url = new URL(value);
+    const path = url.pathname.replace(/\/+$/, "");
+    if (!path || path === "/v1") {
+      url.pathname = "/v1/images/generations";
+      return url.toString();
+    }
+  } catch {
+    return value;
+  }
+  return value;
+}
+
+async function readJsonResponse(response: Response) {
+  const body = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok) {
+    const detail = body.trim().slice(0, 180);
+    throw new Error(`接口返回 ${response.status}${detail ? `：${detail}` : ""}`);
+  }
+  if (!contentType.includes("application/json") && body.trim().startsWith("<")) {
+    throw new Error("接口返回了网页内容，请把接口地址改为 /v1/images/generations 结尾。");
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error("接口响应不是有效 JSON，请检查 API 地址或服务返回格式。");
+  }
+}
+
+function extractImageUrl(data: unknown) {
+  const value = data as {
+    imageUrl?: string;
+    url?: string;
+    b64_json?: string;
+    data?: Array<{ url?: string; b64_json?: string }>;
+  };
+  const imageUrl = value.imageUrl || value.url || value.b64_json || value.data?.[0]?.url || value.data?.[0]?.b64_json;
+  if (!imageUrl) return "";
+  const text = String(imageUrl);
+  return text.startsWith("http") || text.startsWith("data:") ? text : `data:image/png;base64,${text}`;
+}
+
+function imageSizeForRatio(ratio: string) {
+  if (ratio === "16:9") return "1536x864";
+  if (ratio === "9:16") return "864x1536";
+  return "1024x1024";
+}
+
 function uid(prefix = "node") {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -463,6 +515,7 @@ export default function Workbench() {
   const [resultDataUrl, setResultDataUrl] = useState("");
   const [prompt, setPrompt] = useState("");
   const [generateStatus, setGenerateStatus] = useState("手机模式使用独立的手机生图 API，可选 Nano Banana 2 或 GPT Image 2。");
+  const [workflowStatus, setWorkflowStatus] = useState("右键添加节点，拖拽连线，滚轮缩放");
   const [isGenerating, setIsGenerating] = useState(false);
 
   const desktopRef = useRef<HTMLElement | null>(null);
@@ -473,6 +526,7 @@ export default function Workbench() {
   const spacePressedRef = useRef(false);
   const undoStackRef = useRef<string[]>([]);
   const copiedGraphRef = useRef<{ nodes: WorkflowNode[]; connections: Connection[] } | null>(null);
+  const suppressNextPortClickRef = useRef(false);
   const workflowFileRef = useRef<HTMLInputElement | null>(null);
 
   const dotBackground = useMemo(
@@ -799,8 +853,44 @@ export default function Workbench() {
     [saveSnapshot],
   );
 
+  const connectPorts = useCallback(
+    (from: PendingConnection, to: PortRefData) => {
+      if (from.nodeId === to.nodeId) return false;
+      saveSnapshot();
+      setConnections((current) => {
+        const withoutDuplicateTarget = current.filter((connection) => !(connection.to.nodeId === to.nodeId && connection.to.portId === to.portId));
+        return [
+          ...withoutDuplicateTarget,
+          {
+            id: uid("link"),
+            from: { nodeId: from.nodeId, portId: from.portId },
+            to: { nodeId: to.nodeId, portId: to.portId },
+            color: from.color,
+          },
+        ];
+      });
+      setWorkflowStatus("已连接节点，运行工作流即可生成。");
+      return true;
+    },
+    [saveSnapshot],
+  );
+
+  const handlePortPointerDown = useCallback((nodeId: string, portId: string, direction: PortDirection, color: PortColor, event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenus();
+    if (direction !== "output") return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) setPointerPosition({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    setPendingConnection({ nodeId, portId, color });
+  }, [closeMenus]);
+
   const handlePortClick = useCallback(
     (nodeId: string, portId: string, direction: PortDirection, color: PortColor) => {
+      if (suppressNextPortClickRef.current) {
+        suppressNextPortClickRef.current = false;
+        return;
+      }
       if (direction === "output") {
         setPendingConnection({ nodeId, portId, color });
         return;
@@ -811,19 +901,11 @@ export default function Workbench() {
         return;
       }
 
-      saveSnapshot();
-      setConnections((current) => [
-        ...current,
-        {
-          id: uid("link"),
-          from: { nodeId: pendingConnection.nodeId, portId: pendingConnection.portId },
-          to: { nodeId, portId },
-          color: pendingConnection.color,
-        },
-      ]);
+      connectPorts(pendingConnection, { nodeId, portId });
       setPendingConnection(null);
+      setPointerPosition(null);
     },
-    [pendingConnection, saveSnapshot],
+    [connectPorts, pendingConnection],
   );
 
   const setNodeValue = useCallback((nodeId: string, field: string, value: string) => {
@@ -914,6 +996,10 @@ export default function Workbench() {
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
+      if (pendingConnection) {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) setPointerPosition({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+      }
       if (dragRef.current) {
         const drag = dragRef.current;
         setNodes((current) =>
@@ -937,7 +1023,19 @@ export default function Workbench() {
         }));
       }
     };
-    const onPointerUp = () => {
+    const onPointerUp = (event: PointerEvent) => {
+      if (pendingConnection) {
+        const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+        const port = target?.closest<HTMLButtonElement>("[data-port-direction='input']");
+        const nodeId = port?.dataset.nodeId;
+        const portId = port?.dataset.portId;
+        if (nodeId && portId) {
+          const connected = connectPorts(pendingConnection, { nodeId, portId });
+          if (connected) suppressNextPortClickRef.current = true;
+        }
+        setPendingConnection(null);
+        setPointerPosition(null);
+      }
       if (dragRef.current) saveWorkflowQuietly();
       dragRef.current = null;
       panRef.current = null;
@@ -948,7 +1046,7 @@ export default function Workbench() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [camera.scale, saveWorkflowQuietly]);
+  }, [camera.scale, connectPorts, pendingConnection, saveWorkflowQuietly]);
 
   const exportWorkflow = useCallback(() => {
     const link = document.createElement("a");
@@ -964,11 +1062,101 @@ export default function Workbench() {
     applyWorkflowState(JSON.parse(await file.text()) as Partial<WorkflowState>);
   }, [applyWorkflowState, saveSnapshot]);
 
-  const runWorkflow = useCallback(() => {
-    setHistoryItems((current) => [{ time: new Date().toLocaleString(), nodes: nodes.length, connections: connections.length }, ...current].slice(0, 12));
-    saveWorkflowQuietly();
-    alert(`已检查 ${nodes.length} 个节点和 ${connections.length} 条连线。接入真实 API 后这里会按工作流顺序执行。`);
-  }, [connections.length, nodes.length, saveWorkflowQuietly]);
+  const runWorkflow = useCallback(async () => {
+    const enabledNodes = nodes.filter((node) => !node.disabled);
+    const imageNodes = enabledNodes.filter((node) => node.type === "image-generation");
+    const imageApi = appSettings.imageApi.endpoint.trim() ? appSettings.imageApi : appSettings.mobileApi;
+    if (!imageNodes.length) {
+      setWorkflowStatus("当前工作流里没有可运行的图像生成节点。");
+      return;
+    }
+    if (!imageApi.endpoint.trim()) {
+      setWorkflowStatus("请先在系统设置的图像 API 或手机 API 里填写接口地址和密钥。");
+      setActivePanel("settings");
+      return;
+    }
+
+    const nodeById = new Map(enabledNodes.map((node) => [node.id, node]));
+    const outputValue = (node: WorkflowNode, portId: string) => {
+      if (node.type === "text-card") return node.values.text || "";
+      if (node.type === "multiline-text") return node.values[portId] || "";
+      if (node.type === "reference-image") return node.values.imageData || "";
+      if (node.type === "preview") return node.values.imageData || node.values.text || "";
+      if (node.type === "resize-image") return node.values.imageData || "";
+      if (node.type === "image-generation") return node.values.imageData || "";
+      if (node.type === "chat") return node.values.user || "";
+      if (node.type === "logic-switch") return node.values.note || "";
+      return "";
+    };
+    const incomingValues = (nodeId: string, portIds: string[]) =>
+      connections
+        .filter((connection) => connection.to.nodeId === nodeId && portIds.includes(connection.to.portId))
+        .map((connection) => {
+          const fromNode = nodeById.get(connection.from.nodeId);
+          return fromNode ? outputValue(fromNode, connection.from.portId).trim() : "";
+        })
+        .filter(Boolean);
+
+    setIsGenerating(true);
+    setWorkflowStatus(`正在运行 ${imageNodes.length} 个图像生成节点...`);
+    try {
+      let generatedCount = 0;
+      const nodeUpdates = new Map<string, Record<string, string>>();
+      for (const imageNode of imageNodes) {
+        const promptParts = [
+          imageNode.values.system,
+          ...incomingValues(imageNode.id, ["system"]),
+          imageNode.values.user,
+          ...incomingValues(imageNode.id, ["user"]),
+        ].map((value) => value.trim()).filter(Boolean);
+        const promptText = promptParts.join("\n\n");
+        if (!promptText) throw new Error(`节点「${nodeConfigs[imageNode.type].title}」缺少提示词。`);
+
+        const referenceImage = incomingValues(imageNode.id, ["ref1", "ref2", "ref3", "ref4", "ref5"]).find((value) => value.startsWith("data:image/"));
+        const payload = {
+          model: imageNode.values.model || imageApi.model,
+          prompt: promptText,
+          size: imageSizeForRatio(imageNode.values.ratio),
+          quality: imageNode.values.quality,
+          n: Number(imageNode.values.count || "1"),
+          ...(referenceImage ? { referenceImage } : {}),
+        };
+        const response = await fetch(normalizeImageEndpoint(imageApi.endpoint), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(imageApi.apiKey.trim() ? { Authorization: `Bearer ${imageApi.apiKey.trim()}` } : {}),
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await readJsonResponse(response);
+        const imageUrl = extractImageUrl(data);
+        if (!imageUrl) throw new Error("响应中没有找到 imageUrl、url 或 b64_json");
+        nodeUpdates.set(imageNode.id, { imageData: imageUrl, status: "生成完成" });
+        connections
+          .filter((connection) => connection.from.nodeId === imageNode.id && connection.from.portId === "image")
+          .forEach((connection) => {
+            nodeUpdates.set(connection.to.nodeId, { imageData: imageUrl, text: "生成完成" });
+          });
+        setResultDataUrl(imageUrl);
+        generatedCount += 1;
+      }
+
+      setNodes((current) =>
+        current.map((node) => {
+          const patch = nodeUpdates.get(node.id);
+          return patch ? { ...node, values: { ...node.values, ...patch } } : node;
+        }),
+      );
+      setHistoryItems((current) => [{ time: new Date().toLocaleString(), nodes: nodes.length, connections: connections.length }, ...current].slice(0, 12));
+      saveWorkflowQuietly();
+      setWorkflowStatus(`工作流运行完成，已生成 ${generatedCount} 张图片。`);
+    } catch (error) {
+      setWorkflowStatus(`工作流运行失败：${error instanceof Error ? error.message : "未知错误"}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [appSettings.imageApi, appSettings.mobileApi, connections, nodes, saveWorkflowQuietly]);
 
   const currentMobileModel = appSettings.mobileApi.model;
 
@@ -1000,7 +1188,7 @@ export default function Workbench() {
     setIsGenerating(true);
     setGenerateStatus(`正在调用${modelDisplayName(MOBILE_IMAGE_MODEL_OPTIONS, currentMobileModel)}...`);
     try {
-      const response = await fetch(mobileApi.endpoint.trim(), {
+      const response = await fetch(normalizeImageEndpoint(mobileApi.endpoint), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1008,8 +1196,7 @@ export default function Workbench() {
         },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error(`接口返回 ${response.status}`);
-      const data = await response.json();
+      const data = await readJsonResponse(response);
       let imageUrl = data.imageUrl || data.url || data.data?.[0]?.url || data.data?.[0]?.b64_json;
       if (imageUrl && !String(imageUrl).startsWith("http") && !String(imageUrl).startsWith("data:")) imageUrl = `data:image/png;base64,${imageUrl}`;
       if (!imageUrl) throw new Error("响应中没有找到 imageUrl、url 或 b64_json");
@@ -1143,6 +1330,7 @@ export default function Workbench() {
                   setContextMenu((menu) => ({ ...menu, visible: false }));
                 }}
                 onPortClick={handlePortClick}
+                onPortPointerDown={handlePortPointerDown}
                 onFieldChange={setNodeValue}
                 onCommand={(command) => {
                   saveSnapshot();
@@ -1168,6 +1356,8 @@ export default function Workbench() {
           <DesktopChrome
             dark={dark}
             camera={camera}
+            status={workflowStatus}
+            isRunning={isGenerating}
             activePanel={activePanel}
             onToggleDark={() => setDark((value) => !value)}
             onShowChooser={() => setMode("chooser")}
@@ -1176,10 +1366,10 @@ export default function Workbench() {
             onImportClick={() => workflowFileRef.current?.click()}
             onSave={() => {
               localStorage.setItem("drawing_workflow", JSON.stringify(getWorkflowState()));
-              alert("工作流已保存到本地浏览器。");
+              setWorkflowStatus("工作流已保存到本地浏览器。");
             }}
             onRun={runWorkflow}
-            onStop={() => alert("已停止当前工作流。")}
+            onStop={() => setWorkflowStatus("已停止当前工作流。")}
           />
 
           {activePanel === "guide" && <GuidePanel onClose={() => setActivePanel(null)} />}
@@ -1276,6 +1466,7 @@ function NodeCard({
   onHeaderPointerDown,
   onContextMenu,
   onPortClick,
+  onPortPointerDown,
   onFieldChange,
   onCommand,
   onFileChange,
@@ -1288,6 +1479,7 @@ function NodeCard({
   onHeaderPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
   onPortClick: (nodeId: string, portId: string, direction: PortDirection, color: PortColor) => void;
+  onPortPointerDown: (nodeId: string, portId: string, direction: PortDirection, color: PortColor, event: React.PointerEvent<HTMLButtonElement>) => void;
   onFieldChange: (nodeId: string, field: string, value: string) => void;
   onCommand: (command: string) => void;
   onFileChange: (file: File) => void;
@@ -1319,6 +1511,7 @@ function NodeCard({
           top={58 + index * 27}
           pending={false}
           onPortClick={onPortClick}
+          onPortPointerDown={onPortPointerDown}
           registerPort={registerPort}
         />
       ))}
@@ -1331,6 +1524,7 @@ function NodeCard({
           top={94 + index * 36}
           pending={pendingConnection?.nodeId === node.id && pendingConnection.portId === port.id}
           onPortClick={onPortClick}
+          onPortPointerDown={onPortPointerDown}
           registerPort={registerPort}
         />
       ))}
@@ -1352,6 +1546,7 @@ function PortButton({
   top,
   pending,
   onPortClick,
+  onPortPointerDown,
   registerPort,
 }: {
   nodeId: string;
@@ -1360,6 +1555,7 @@ function PortButton({
   top: number;
   pending: boolean;
   onPortClick: (nodeId: string, portId: string, direction: PortDirection, color: PortColor) => void;
+  onPortPointerDown: (nodeId: string, portId: string, direction: PortDirection, color: PortColor, event: React.PointerEvent<HTMLButtonElement>) => void;
   registerPort: (key: string, element: HTMLButtonElement | null) => void;
 }) {
   return (
@@ -1376,6 +1572,10 @@ function PortButton({
       style={{ top }}
       type="button"
       title={port.label}
+      data-node-id={nodeId}
+      data-port-id={port.id}
+      data-port-direction={direction}
+      onPointerDown={(event) => onPortPointerDown(nodeId, port.id, direction, port.color, event)}
       onClick={(event) => {
         event.stopPropagation();
         onPortClick(nodeId, port.id, direction, port.color);
@@ -1444,6 +1644,9 @@ function renderNodeBody(
         </div>
         {field("system", node.values.system, true)}
         {field("user", node.values.user, true)}
+        {node.values.imageData && (
+          <img className="max-h-[180px] w-full rounded-lg border border-brand/20 object-contain" src={node.values.imageData} alt="生成结果" />
+        )}
       </>
     );
   }
@@ -1537,6 +1740,14 @@ function renderNodeBody(
     );
   }
 
+  if (node.type === "preview") {
+    return (
+      <div className="grid min-h-[148px] place-items-center overflow-hidden rounded-lg border border-dashed border-brand bg-brand-pale/70 text-center text-xs font-black text-brand-dark">
+        {node.values.imageData ? <img className="h-full max-h-[220px] w-full object-contain" src={node.values.imageData} alt="预览结果" /> : node.values.text || "连接并运行..."}
+      </div>
+    );
+  }
+
   return <div className="grid min-h-[148px] place-items-center rounded-lg border border-dashed border-brand bg-brand-pale/70 text-xs font-black text-brand-dark">连接并运行...</div>;
 }
 
@@ -1551,6 +1762,8 @@ function CatBadge() {
 function DesktopChrome({
   dark,
   camera,
+  status,
+  isRunning,
   activePanel,
   onToggleDark,
   onShowChooser,
@@ -1563,6 +1776,8 @@ function DesktopChrome({
 }: {
   dark: boolean;
   camera: Camera;
+  status: string;
+  isRunning: boolean;
   activePanel: string | null;
   onToggleDark: () => void;
   onShowChooser: () => void;
@@ -1611,11 +1826,13 @@ function DesktopChrome({
       </button>
       <div className="absolute bottom-6 right-0 z-[5] flex items-center gap-3">
         <button className="inline-flex min-h-[58px] min-w-[162px] items-center gap-2 rounded-full border-4 border-[#e5b48a] bg-white/95 px-5 text-[17px] font-black text-brand shadow-orange" type="button" onClick={onStop}>■ 停止运行</button>
-        <button className="inline-flex min-h-[58px] min-w-[170px] items-center gap-2 rounded-l-full border-4 border-brand-dark bg-brand px-5 text-[17px] font-black text-white shadow-orange" type="button" onClick={onRun}>🚀 运行工作流</button>
+        <button className="inline-flex min-h-[58px] min-w-[170px] items-center gap-2 rounded-l-full border-4 border-brand-dark bg-brand px-5 text-[17px] font-black text-white shadow-orange disabled:opacity-60" type="button" disabled={isRunning} onClick={onRun}>
+          {isRunning ? "运行中..." : "🚀 运行工作流"}
+        </button>
       </div>
       <div className="absolute bottom-[30px] left-[230px] z-[5] flex items-center gap-2.5 rounded-xl border border-brand/30 bg-white/95 px-3 py-2 text-sm text-brand-muted shadow-orange">
         <span className="font-black text-brand-ink">{Math.round(camera.scale * 100)}%</span>
-        <span>右键添加节点，拖拽连线，滚轮缩放</span>
+        <span>{status}</span>
       </div>
     </>
   );

@@ -1220,6 +1220,39 @@ function loadApiSettings() {
 apiEndpoint.addEventListener("change", saveApiSettings);
 apiKey.addEventListener("change", saveApiSettings);
 
+function normalizeImageEndpoint(endpoint) {
+  const value = endpoint.trim();
+  if (!value) return value;
+  try {
+    const url = new URL(value);
+    const path = url.pathname.replace(/\/+$/, "");
+    if (!path || path === "/v1") {
+      url.pathname = "/v1/images/generations";
+      return url.toString();
+    }
+  } catch {
+    return value;
+  }
+  return value;
+}
+
+async function readJsonResponse(response) {
+  const body = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok) {
+    const detail = body.trim().slice(0, 180);
+    throw new Error(`接口返回 ${response.status}${detail ? `：${detail}` : ""}`);
+  }
+  if (!contentType.includes("application/json") && body.trim().startsWith("<")) {
+    throw new Error("接口返回了网页内容，请把接口地址改为 /v1/images/generations 结尾。");
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error("接口响应不是有效 JSON，请检查 API 地址或服务返回格式。");
+  }
+}
+
 async function generateImage() {
   const endpoint = apiEndpoint.value.trim();
   const key = apiKey.value.trim();
@@ -1245,7 +1278,7 @@ async function generateImage() {
   generateStatus.textContent = `正在调用${modelSelect.selectedOptions[0].textContent}...`;
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch(normalizeImageEndpoint(endpoint), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1254,11 +1287,7 @@ async function generateImage() {
       body: JSON.stringify(lastPayload),
     });
 
-    if (!response.ok) {
-      throw new Error(`接口返回 ${response.status}`);
-    }
-
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     resultDataUrl = data.imageUrl || data.url || data.data?.[0]?.url || data.data?.[0]?.b64_json;
 
     if (resultDataUrl && !resultDataUrl.startsWith("http") && !resultDataUrl.startsWith("data:")) {
