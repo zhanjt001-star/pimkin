@@ -195,6 +195,14 @@ const MOBILE_IMAGE_MODEL_OPTIONS: ModelOption[] = [
   { value: "gpt-image-2", label: "GPT Image 2 / GPT 模型", provider: "OpenAI" },
 ];
 
+const IMAGE_COUNT_OPTIONS = ["1", "2", "3", "4"];
+
+function normalizeImageCount(value: string | number) {
+  const count = Number(value);
+  if (!Number.isFinite(count)) return 1;
+  return Math.min(4, Math.max(1, Math.trunc(count)));
+}
+
 const defaultAppSettings: AppSettings = {
   imageDirectory: "",
   chatApi: {
@@ -564,6 +572,7 @@ export default function Workbench() {
   const [resultDataUrl, setResultDataUrl] = useState("");
   const [imageViewer, setImageViewer] = useState<{ src: string; title: string } | null>(null);
   const [prompt, setPrompt] = useState("");
+  const [mobileImageCount, setMobileImageCount] = useState("1");
   const [generateStatus, setGenerateStatus] = useState("手机模式使用独立的手机生图 API，可选 Nano Banana 2 或 GPT Image 2。");
   const [workflowStatus, setWorkflowStatus] = useState("右键添加节点，拖拽连线，滚轮缩放");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1190,7 +1199,7 @@ export default function Workbench() {
           model,
           prompt: promptText,
           size: imageSizeForRatio(imageNode.values.ratio),
-          n: Number(imageNode.values.count || "1"),
+          n: normalizeImageCount(imageNode.values.count || "1"),
           ...imageReferencePayload(referenceImages, model),
         };
         const response = await fetch(normalizeImageEndpoint(imageApi.endpoint), {
@@ -1239,9 +1248,10 @@ export default function Workbench() {
       model,
       prompt: prompt.trim(),
       size: "1024x1024",
+      n: normalizeImageCount(mobileImageCount),
       ...imageReferencePayload(referenceImages, model),
     };
-  }, [appSettings.mobileApi.model, prompt, referenceDataUrl]);
+  }, [appSettings.mobileApi.model, mobileImageCount, prompt, referenceDataUrl]);
 
   const generateImage = useCallback(async () => {
     const payload = buildMobilePayload();
@@ -1523,6 +1533,7 @@ export default function Workbench() {
         <MobileGenerator
           prompt={prompt}
           model={currentMobileModel}
+          count={mobileImageCount}
           apiConfig={appSettings.mobileApi}
           status={generateStatus}
           isGenerating={isGenerating}
@@ -1530,6 +1541,7 @@ export default function Workbench() {
           resultDataUrl={resultDataUrl}
           onShowChooser={() => setMode("chooser")}
           onPromptChange={setPrompt}
+          onCountChange={setMobileImageCount}
           onApiConfigChange={(patch) => setAppSettings((current) => ({ ...current, mobileApi: { ...current.mobileApi, ...patch } }))}
           onGenerate={generateImage}
           onReferenceChange={async (file) => setReferenceDataUrl(await fileToDataUrl(file))}
@@ -1726,11 +1738,8 @@ function renderNodeBody(
         </div>
         <div className="grid gap-1.5">
           <label className={labelClass}>出图数量</label>
-          <select className={inputClass} value={node.values.count} onChange={(event) => onFieldChange(node.id, "count", event.target.value)}>
-            <option>1</option>
-            <option>2</option>
-            <option>4</option>
-            <option>8</option>
+          <select className={inputClass} value={String(normalizeImageCount(node.values.count || "1"))} onChange={(event) => onFieldChange(node.id, "count", event.target.value)}>
+            {IMAGE_COUNT_OPTIONS.map((count) => <option key={count}>{count}</option>)}
           </select>
         </div>
         {field("system", node.values.system, true)}
@@ -2296,6 +2305,7 @@ function NodeMenu({ x, y, onAction }: { x: number; y: number; onAction: (action:
 function MobileGenerator({
   prompt,
   model,
+  count,
   apiConfig,
   status,
   isGenerating,
@@ -2303,6 +2313,7 @@ function MobileGenerator({
   resultDataUrl,
   onShowChooser,
   onPromptChange,
+  onCountChange,
   onApiConfigChange,
   onGenerate,
   onReferenceChange,
@@ -2310,6 +2321,7 @@ function MobileGenerator({
 }: {
   prompt: string;
   model: string;
+  count: string;
   apiConfig: ApiConfig;
   status: string;
   isGenerating: boolean;
@@ -2317,6 +2329,7 @@ function MobileGenerator({
   resultDataUrl: string;
   onShowChooser: () => void;
   onPromptChange: (value: string) => void;
+  onCountChange: (value: string) => void;
   onApiConfigChange: (patch: Partial<ApiConfig>) => void;
   onGenerate: () => void;
   onReferenceChange: (file: File) => void;
@@ -2343,6 +2356,12 @@ function MobileGenerator({
             <select className={inputClass} id="modelSelect" value={model} onChange={(event) => onApiConfigChange({ model: event.target.value })}>
               {MOBILE_IMAGE_MODEL_OPTIONS.map((modelOption) => (
                 <option key={modelOption.value} value={modelOption.value}>{modelOption.provider} · {modelOption.label}</option>
+              ))}
+            </select>
+            <label className="text-xs font-extrabold text-slate-500" htmlFor="mobileImageCount">出图数量</label>
+            <select className={inputClass} id="mobileImageCount" value={count} onChange={(event) => onCountChange(event.target.value)}>
+              {IMAGE_COUNT_OPTIONS.map((countOption) => (
+                <option key={countOption} value={countOption}>{countOption}</option>
               ))}
             </select>
             <details className="grid gap-2 rounded-xl border border-brand/25 bg-brand-pale/70 p-3 text-sm leading-6 text-brand-muted">
